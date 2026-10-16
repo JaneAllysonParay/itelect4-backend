@@ -9,16 +9,13 @@ interface IdParam {
 
 export const itemRouter = Router();
 
-itemRouter.use(requireAuth);
-
 itemRouter.get(
   "/",
   async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const items = await Item.find({
-        ownerId: _req.userId!,
-      }).sort({
+      const items = await Item.find().sort({
         dateReported: -1,
+        _id: 1,
       });
 
       res.json(items);
@@ -38,7 +35,6 @@ itemRouter.get(
     try {
       const item = await Item.findOne({
         _id: req.params.id,
-        ownerId: req.userId!,
       });
 
       if (!item) {
@@ -55,6 +51,7 @@ itemRouter.get(
 
 itemRouter.post(
   "/",
+  requireAuth,
   async (
     req: Request<Record<string, string>, unknown, NewItemBody>,
     res: Response,
@@ -75,6 +72,7 @@ itemRouter.post(
 
 itemRouter.patch(
   "/:id",
+  requireAuth,
   async (
     req: Request<IdParam, unknown, Partial<NewItemBody>>,
     res: Response,
@@ -115,6 +113,7 @@ itemRouter.patch(
 
 itemRouter.delete(
   "/:id",
+  requireAuth,
   async (
     req: Request<IdParam>,
     res: Response,

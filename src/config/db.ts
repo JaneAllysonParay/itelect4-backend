@@ -1,15 +1,26 @@
 import mongoose from "mongoose";
 
-export async function connectDB(): Promise<void> {
+let connection: Promise<typeof mongoose> | null = null;
+
+export function connectDB(): Promise<typeof mongoose> {
   const uri = process.env.MONGODB_URI;
 
   if (!uri) {
     throw new Error("MONGODB_URI is missing. Copy .env.example to .env and fill it in.");
   }
 
-  await mongoose.connect(uri, {
-    serverSelectionTimeoutMS: 5000,
-  });
+  if (connection === null) {
+    connection = mongoose
+      .connect(uri, { serverSelectionTimeoutMS: 5000 })
+      .then((connected) => {
+        console.log("MongoDB connected:", connected.connection.name);
+        return connected;
+      })
+      .catch((err: unknown) => {
+        connection = null;
+        throw err;
+      });
+  }
 
-  console.log("MongoDB connected: " + mongoose.connection.name);
+  return connection;
 }

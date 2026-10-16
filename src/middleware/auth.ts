@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from "express";
+import type { RequestHandler } from "express";
 import jwt from "jsonwebtoken";
 
 declare global {
@@ -13,11 +13,11 @@ export interface TokenPayload {
   userId: string;
 }
 
-export function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
+export const requireAuth: RequestHandler<any, any, any, any> = (
+  req,
+  res,
+  next,
+): void => {
   const authorization = req.headers.authorization;
 
   if (!authorization?.startsWith("Bearer ")) {
@@ -41,4 +41,4 @@ export function requireAuth(
       message: "Token is invalid or has expired",
     });
   }
-}
+};
