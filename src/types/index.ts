@@ -35,6 +35,18 @@ export type ItemDoc = Omit<Item, "id" | "ownerId"> & {
   ownerId: Types.ObjectId;
 };
 
+export type ClaimDoc = Omit<
+  Claim,
+  "id" | "itemId" | "claimantId"
+> & {
+  itemId: Types.ObjectId;
+  claimantId: Types.ObjectId;
+};
+
+export type NewClaimBody = Pick<Claim, "proof"> & {
+  itemId: string;
+};
+
 export type NewItemBody = Pick<
   Item,
   "title" | "description" | "location" | "status"

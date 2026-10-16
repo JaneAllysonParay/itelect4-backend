@@ -54,7 +54,11 @@ authRouter.post(
       const email = req.body.email.trim().toLowerCase();
       const user = await User.findOne({ email }).select("+password");
 
-      if (!user || !(await bcrypt.compare(password, user.password))) {
+      if (
+        !user ||
+        !user.isActive ||
+        !(await bcrypt.compare(password, user.password))
+      ) {
         res.status(401).json({ message: "Email or password is incorrect" });
         return;
       }
