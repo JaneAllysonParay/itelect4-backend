@@ -8,6 +8,7 @@ import mongoose from "mongoose";
 import { connectDB } from "./config/db.js";
 import { authRouter } from "./routes/auth.js";
 import { claimRouter } from "./routes/claims.js";
+import { aiRouter } from "./routes/ai.js";
 import { itemRouter } from "./routes/items.js";
 
 export const app = express();
@@ -35,6 +36,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
 app.use("/api/auth", authRouter);
 app.use("/api/items", itemRouter);
 app.use("/api/claims", claimRouter);
+app.use("/api/ai", aiRouter);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({
