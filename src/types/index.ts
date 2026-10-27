@@ -1,7 +1,7 @@
 import type { Types } from "mongoose";
 
 export interface User {
-  id: number;
+  id: string;
   name: string;
   email: string;
   role: "student" | "security" | "admin";
@@ -9,19 +9,19 @@ export interface User {
 }
 
 export interface Item {
-  id: number;
+  id: string;
   title: string;
   description: string;
   location: string;
   dateReported: Date;
   status: "lost" | "found" | "claimed";
-  ownerId: number;
+  ownerId: string;
 }
 
 export interface Claim {
-  id: number;
-  itemId: number;
-  claimantId: number;
+  id: string;
+  itemId: string;
+  claimantId: string;
   claimDate: Date;
   status: "pending" | "approved" | "rejected";
   proof: string;

@@ -15,7 +15,12 @@ Return structured JSON that follows the provided schema. The response fields mea
 - readiness: "ready" if enough identifying information exists; "almost" if one or two useful clarifications are still missing; "not-yet" if the report is too vague to be useful.`.trim();
 
 export function wrap(description: string): string {
-  return `<submission>\n${description}\n</submission>`;
+  const escapedDescription = description
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+  return `<submission>\n${escapedDescription}\n</submission>`;
 }
 
 interface Example {

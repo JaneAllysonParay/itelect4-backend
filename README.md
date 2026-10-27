@@ -27,10 +27,13 @@ This repository contains the Express and TypeScript API for the Campus Lost & Fo
 | PATCH | /api/items/:id | JWT | Update an owned item report |
 | DELETE | /api/items/:id | JWT | Delete an owned item report |
 | GET | /api/claims | JWT | List the signed-in user's claims |
+| GET | /api/claims/received | JWT | List claims on the signed-in user's items |
 | POST | /api/claims | JWT | Submit an item claim |
+| PATCH | /api/claims/:id/status | JWT and item owner | Approve or reject a pending claim |
 | POST | /api/ai | JWT and rate limited | Review a lost or found item report |
 
 Protected routes expect an Authorization header in the form Bearer followed by a valid JWT.
+Approving a claim also changes its item status to `claimed` in the same MongoDB transaction. The health endpoint returns HTTP 503 with `db: false` if MongoDB cannot be reached.
 
 ## Architecture
 
