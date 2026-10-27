@@ -21,16 +21,32 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN ?? "")
 app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
+app.get("/api/health", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    await connectDB();
+    if (mongoose.connection.readyState !== 1) {
+      res.status(503).json({
+        ok: true,
+        db: false,
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      db: true,
+    });
+  } catch {
+    res.status(503).json({
+      ok: true,
+      db: false,
+    });
+  }
+});
+
 app.use(async (_req, _res, next) => {
   await connectDB();
   next();
-});
-
-app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({
-    ok: true,
-    db: mongoose.connection.readyState === 1,
-  });
 });
 
 app.use("/api/auth", authRouter);
