@@ -58,8 +58,12 @@ itemRouter.post(
     next: NextFunction
   ): Promise<void> => {
     try {
+      const { title, description, location, status } = req.body ?? {};
       const item = await Item.create({
-        ...req.body,
+        title,
+        description,
+        location,
+        status,
         ownerId: req.userId!,
       });
 
@@ -94,7 +98,7 @@ itemRouter.patch(
         },
         update,
         {
-          new: true,
+          returnDocument: "after",
           runValidators: true,
         }
       );

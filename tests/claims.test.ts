@@ -97,4 +97,40 @@ describe("PATCH /api/claims/:id/status", () => {
     );
     expect(session.endSession).toHaveBeenCalledOnce();
   });
+
+  it("lets the item owner reject a pending claim without changing the item", async () => {
+    vi.spyOn(Claim, "findById").mockResolvedValue(
+      { itemId: "item-1", status: "pending" } as never,
+    );
+    vi.spyOn(Item, "findById").mockResolvedValue(
+      { ownerId: "owner-1" } as never,
+    );
+
+    const session = {
+      withTransaction: vi.fn(
+        async (operation: () => Promise<void>) => operation(),
+      ),
+      endSession: vi.fn(async () => undefined),
+    } as unknown as ClientSession;
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const updateClaim = vi
+      .spyOn(Claim, "findOneAndUpdate")
+      .mockResolvedValue({ id: "claim-1", status: "rejected" } as never);
+    const updateItem = vi.spyOn(Item, "findOneAndUpdate");
+
+    const response = await request(app)
+      .patch("/api/claims/claim-1/status")
+      .set("Authorization", `Bearer ${tokenFor("owner-1")}`)
+      .send({ status: "rejected" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("rejected");
+    expect(updateClaim).toHaveBeenCalledWith(
+      { _id: "claim-1", status: "pending" },
+      { $set: { status: "rejected" } },
+      expect.objectContaining({ session, runValidators: true }),
+    );
+    expect(updateItem).not.toHaveBeenCalled();
+    expect(session.endSession).toHaveBeenCalledOnce();
+  });
 });

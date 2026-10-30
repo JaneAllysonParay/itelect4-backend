@@ -3,17 +3,12 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { User } from "../models/User.js";
 import type { TokenPayload } from "../middleware/auth.js";
-
-export interface RegisterBody {
-  name: string;
-  email: string;
-  password: string;
-}
-
-export interface LoginBody {
-  email: string;
-  password: string;
-}
+import {
+  loginBodySchema,
+  registerBodySchema,
+  type LoginBody,
+  type RegisterBody,
+} from "../schemas/auth.js";
 
 export const authRouter = Router();
 
@@ -25,8 +20,17 @@ authRouter.post(
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { name, password } = req.body;
-      const email = req.body.email.trim().toLowerCase();
+      const parsed = registerBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.issues.map((issue) => issue.message),
+        });
+        return;
+      }
+
+      const { name, password } = parsed.data;
+      const email = parsed.data.email.trim().toLowerCase();
       const existingUser = await User.findOne({ email });
 
       if (existingUser) {
@@ -50,8 +54,17 @@ authRouter.post(
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { password } = req.body;
-      const email = req.body.email.trim().toLowerCase();
+      const parsed = loginBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.issues.map((issue) => issue.message),
+        });
+        return;
+      }
+
+      const { password } = parsed.data;
+      const email = parsed.data.email.trim().toLowerCase();
       const user = await User.findOne({ email }).select("+password");
 
       if (

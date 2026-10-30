@@ -138,7 +138,7 @@ claimRouter.patch(
           const updatedClaim = await Claim.findOneAndUpdate(
             { _id: req.params.id, status: "pending" },
             { $set: { status } },
-            { new: true, runValidators: true, session },
+            { returnDocument: "after", runValidators: true, session },
           );
 
           if (!updatedClaim) {
@@ -157,7 +157,7 @@ claimRouter.patch(
                 status: { $ne: "claimed" },
               },
               { $set: { status: "claimed" } },
-              { new: true, runValidators: true, session },
+              { returnDocument: "after", runValidators: true, session },
             );
 
             if (!updatedItem) {
