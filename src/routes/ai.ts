@@ -46,6 +46,14 @@ aiRouter.post(
         return;
       }
 
+      if (err instanceof ApiError && err.status === 503) {
+        res.status(503).json({
+          message:
+            "The AI service is temporarily unavailable. Please try again shortly.",
+        });
+        return;
+      }
+
       if (err instanceof ApiError || err instanceof AiReplyError) {
         console.error(err);
         res.status(502).json({
