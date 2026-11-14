@@ -16,6 +16,8 @@ export interface Item {
   dateReported: Date;
   status: "lost" | "found" | "claimed";
   ownerId: string;
+  archivedAt?: Date | null;
+  claimRevision?: number;
 }
 
 export interface Claim {
@@ -25,7 +27,11 @@ export interface Claim {
   claimDate: Date;
   status: "pending" | "approved" | "rejected";
   proof: string;
+  reviewedAt?: Date;
+  reviewedBy?: string;
 }
+
+export type UserRole = User["role"];
 
 export type UserDoc = Omit<User, "id"> & {
   password: string;
@@ -37,17 +43,17 @@ export type ItemDoc = Omit<Item, "id" | "ownerId"> & {
 
 export type ClaimDoc = Omit<
   Claim,
-  "id" | "itemId" | "claimantId"
+  "id" | "itemId" | "claimantId" | "reviewedBy"
 > & {
   itemId: Types.ObjectId;
   claimantId: Types.ObjectId;
+  reviewedBy?: Types.ObjectId;
 };
 
 export type NewClaimBody = Pick<Claim, "proof"> & {
   itemId: string;
 };
 
-export type NewItemBody = Pick<
-  Item,
-  "title" | "description" | "location" | "status"
->;
+export type NewItemBody = Pick<Item, "title" | "description" | "location"> & {
+  status: Exclude<Item["status"], "claimed">;
+};

@@ -34,6 +34,14 @@ const itemSchema = new Schema<ItemDoc>({
     lowercase: true,
     trim: true,
   },
+  archivedAt: {
+    type: Date,
+    default: null,
+  },
+  claimRevision: {
+    type: Number,
+    select: false,
+  },
   ownerId: {
     type: Schema.Types.ObjectId,
     ref: "User",
@@ -46,6 +54,7 @@ itemSchema.set("toJSON", {
     ret.id = String(ret._id);
     delete ret._id;
     delete ret.__v;
+    delete ret.claimRevision;
     return ret;
   },
 });

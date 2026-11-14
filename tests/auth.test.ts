@@ -45,4 +45,26 @@ describe("authentication request validation", () => {
     expect(response.body.message).toBe("Validation failed");
     expect(findUser).not.toHaveBeenCalled();
   });
+
+  it("ignores client-supplied roles during registration", async () => {
+    vi.spyOn(User, "findOne").mockResolvedValue(null);
+    const createUser = vi.spyOn(User, "create").mockResolvedValue(
+      { toJSON: () => ({ id: "student-1", role: "student" }) } as never,
+    );
+
+    const response = await request(app).post("/api/auth/register").send({
+      name: "Jamie Student",
+      email: "jamie@example.edu",
+      password: "safe-password",
+      role: "admin",
+      isActive: false,
+    });
+
+    expect(response.status).toBe(201);
+    expect(createUser).toHaveBeenCalledWith({
+      name: "Jamie Student",
+      email: "jamie@example.edu",
+      password: "safe-password",
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { rateLimit } from "express-rate-limit";
 import { User } from "../models/User.js";
 import type { TokenPayload } from "../middleware/auth.js";
 import {
@@ -12,8 +13,24 @@ import {
 
 export const authRouter = Router();
 
+function createAuthAttemptLimiter() {
+  return rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: {
+      message: "Too many authentication attempts. Please try again later.",
+    },
+  });
+}
+
+const registrationLimiter = createAuthAttemptLimiter();
+const loginLimiter = createAuthAttemptLimiter();
+
 authRouter.post(
   "/register",
+  registrationLimiter,
   async (
     req: Request<Record<string, string>, unknown, RegisterBody>,
     res: Response,
@@ -48,6 +65,7 @@ authRouter.post(
 
 authRouter.post(
   "/login",
+  loginLimiter,
   async (
     req: Request<Record<string, string>, unknown, LoginBody>,
     res: Response,
