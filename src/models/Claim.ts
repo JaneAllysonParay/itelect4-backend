@@ -28,6 +28,13 @@ const claimSchema = new Schema<ClaimDoc>({
     minlength: [5, "Proof must be at least 5 characters"],
     maxlength: [1000, "Proof cannot exceed 1000 characters"],
   },
+  reviewedAt: {
+    type: Date,
+  },
+  reviewedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
 });
 
 claimSchema.set("toJSON", {

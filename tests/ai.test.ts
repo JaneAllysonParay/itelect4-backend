@@ -19,6 +19,7 @@ vi.mock("../src/ai/gemini.js", () => ({
 }));
 
 import { app } from "../src/app.js";
+import { mockAuthenticatedUser } from "./authHelpers.js";
 
 function tokenFor(userId: string): string {
   return jwt.sign({ userId }, process.env.JWT_SECRET!, {
@@ -58,6 +59,7 @@ describe("POST /api/ai authentication", () => {
 
   it("lets a valid token through, then validates the item-report body", async () => {
     const token = tokenFor("test-user");
+    mockAuthenticatedUser("test-user");
 
     const response = await request(app)
       .post("/api/ai")
@@ -71,6 +73,7 @@ describe("POST /api/ai authentication", () => {
   });
 
   it("returns a friendly 503 when Gemini is temporarily unavailable", async () => {
+    mockAuthenticatedUser("test-user");
     const upstreamError = Object.assign(
       Object.create(ApiError.prototype) as ApiError,
       { status: 503, message: "provider stack detail" },
