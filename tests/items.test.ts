@@ -28,6 +28,10 @@ function transactionSession(): ClientSession {
   } as unknown as ClientSession;
 }
 
+function sessionQuery<T>(value: T) {
+  return { session: vi.fn().mockResolvedValue(value) };
+}
+
 describe("POST /api/items", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -55,18 +59,25 @@ describe("POST /api/items", () => {
         description: "Blue insulated tumbler",
         location: "Library",
         status: "found",
+        custodyStatus: "finder_reported",
+        eventAt: "2026-11-13T08:00:00.000Z",
         ownerId: "someone-else",
         dateReported: "2000-01-01T00:00:00.000Z",
       });
 
     expect(response.status).toBe(201);
-    expect(createItem).toHaveBeenCalledWith({
+    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
       title: "Blue tumbler",
       description: "Blue insulated tumbler",
       location: "Library",
       status: "found",
+      reportType: "found",
+      lifecycleStatus: "open",
+      custodyStatus: "finder_reported",
+      eventAt: new Date("2026-11-13T08:00:00.000Z"),
+      dateReported: expect.any(Date),
       ownerId: "owner-from-token",
-    });
+    }));
   });
 
   it("rejects creating an item directly as claimed", async () => {
@@ -97,43 +108,38 @@ describe("POST /api/items", () => {
 
   it("returns a conflict when an owner tries to reopen an item that has been claimed", async () => {
     mockAuthenticatedUser("owner-1");
-    const updateItem = vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(
-      null,
-    );
-    vi.spyOn(Item, "findOne").mockResolvedValue(
-      { status: "claimed", archivedAt: null } as never,
-    );
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const updateItem = vi.spyOn(Item, "findOneAndUpdate");
+    const findItem = vi.spyOn(Item, "findOne")
+      .mockReturnValueOnce(sessionQuery(null) as never)
+      .mockReturnValueOnce(sessionQuery({ status: "claimed", lifecycleStatus: "reserved", archivedAt: null }) as never);
 
     const response = await request(app)
       .patch("/api/items/item-1")
       .set("Authorization", `Bearer ${tokenFor("owner-1")}`)
-      .send({ status: "found" });
+      .send({ title: "Updated tumbler" });
 
     expect(response.status).toBe(409);
-    expect(updateItem).toHaveBeenCalledWith(
-      {
-        _id: "item-1",
-        ownerId: "owner-1",
-        archivedAt: null,
-        status: { $ne: "claimed" },
-      },
-      { status: "found" },
-      expect.objectContaining({ runValidators: true }),
-    );
+    expect(updateItem).not.toHaveBeenCalled();
+    expect(findItem).toHaveBeenCalledTimes(2);
+    expect(session.endSession).toHaveBeenCalledOnce();
   });
 
   it.each([
     ["title", { title: "Updated tumbler" }],
     ["description", { description: "Updated blue tumbler description" }],
     ["location", { location: "Updated library location" }],
-    ["status", { status: "found" }],
-    ["mixed fields", { title: "Updated tumbler", location: "Library", status: "lost" }],
+    ["event time", { eventAt: "2026-11-13T08:00:00.000Z" }],
+    ["mixed fields", { title: "Updated tumbler", location: "Library", eventAt: "2026-11-13T08:00:00.000Z" }],
   ] as const)("keeps a claimed item read-only for %s PATCH bodies", async (_field, body) => {
     mockAuthenticatedUser("owner-1");
-    const updateItem = vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(null);
-    const findOwnedItem = vi.spyOn(Item, "findOne").mockResolvedValue(
-      { status: "claimed", archivedAt: null } as never,
-    );
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const updateItem = vi.spyOn(Item, "findOneAndUpdate");
+    const findOwnedItem = vi.spyOn(Item, "findOne")
+      .mockReturnValueOnce(sessionQuery(null) as never)
+      .mockReturnValueOnce(sessionQuery({ status: "claimed", lifecycleStatus: "reserved", archivedAt: null }) as never);
 
     const response = await request(app)
       .patch("/api/items/item-1")
@@ -141,26 +147,23 @@ describe("POST /api/items", () => {
       .send(body);
 
     expect(response.status).toBe(409);
-    expect(response.body.message).toBe("Claimed items cannot be edited");
-    expect(updateItem).toHaveBeenCalledWith(
-      {
-        _id: "item-1",
-        ownerId: "owner-1",
-        archivedAt: null,
-        status: { $ne: "claimed" },
-      },
-      body,
-      expect.objectContaining({ runValidators: true }),
-    );
+    expect(response.body.message).toMatch(/editing/i);
+    expect(updateItem).not.toHaveBeenCalled();
     expect(findOwnedItem).toHaveBeenCalledWith({
       _id: "item-1",
       ownerId: "owner-1",
     });
+    expect(session.endSession).toHaveBeenCalledOnce();
   });
 
   it("allows the owner to update an unclaimed item", async () => {
     mockAuthenticatedUser("owner-1");
-    const updatedItem = { id: "item-1", status: "found", title: "Updated tumbler" };
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const openItem = { id: "item-1", _id: "item-1", status: "found", reportType: "found", lifecycleStatus: "open", title: "Blue tumbler", ownerId: "owner-1", archivedAt: null };
+    vi.spyOn(Item, "findOne").mockReturnValueOnce(sessionQuery(openItem) as never);
+    vi.spyOn(Claim, "findOne").mockReturnValue(sessionQuery(null) as never);
+    const updatedItem = { id: "item-1", status: "found", reportType: "found", lifecycleStatus: "open", title: "Updated tumbler", ownerId: "owner-1" };
     const updateItem = vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(
       updatedItem as never,
     );
@@ -173,16 +176,20 @@ describe("POST /api/items", () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ id: "item-1", title: "Updated tumbler" });
     expect(updateItem).toHaveBeenCalledWith(
-      expect.objectContaining({ status: { $ne: "claimed" } }),
-      { title: "Updated tumbler" },
-      expect.objectContaining({ runValidators: true }),
+      expect.any(Object),
+      { $set: { title: "Updated tumbler" }, $inc: { claimRevision: 1 } },
+      expect.objectContaining({ runValidators: true, session }),
     );
   });
 
   it("does not reveal a claimed item's status to a non-owner", async () => {
     mockAuthenticatedUser("another-user");
-    const updateItem = vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(null);
-    const findOwnedItem = vi.spyOn(Item, "findOne").mockResolvedValue(null);
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const updateItem = vi.spyOn(Item, "findOneAndUpdate");
+    const findOwnedItem = vi.spyOn(Item, "findOne")
+      .mockReturnValueOnce(sessionQuery(null) as never)
+      .mockReturnValueOnce(sessionQuery(null) as never);
 
     const response = await request(app)
       .patch("/api/items/item-1")
@@ -191,11 +198,7 @@ describe("POST /api/items", () => {
 
     expect(response.status).toBe(404);
     expect(response.body.message).toBe("No item with that id");
-    expect(updateItem).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerId: "another-user", status: { $ne: "claimed" } }),
-      { title: "Attempted edit" },
-      expect.any(Object),
-    );
+    expect(updateItem).not.toHaveBeenCalled();
     expect(findOwnedItem).toHaveBeenCalledWith({
       _id: "item-1",
       ownerId: "another-user",
@@ -204,18 +207,20 @@ describe("POST /api/items", () => {
 
   it("does not allow an owner to edit an archived item", async () => {
     mockAuthenticatedUser("owner-1");
-    vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(null);
-    vi.spyOn(Item, "findOne").mockResolvedValue(
-      { status: "found", archivedAt: new Date() } as never,
-    );
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    vi.spyOn(Item, "findOneAndUpdate");
+    vi.spyOn(Item, "findOne")
+      .mockReturnValueOnce(sessionQuery(null) as never)
+      .mockReturnValueOnce(sessionQuery({ status: "found", archivedAt: new Date() }) as never);
 
     const response = await request(app)
       .patch("/api/items/item-1")
       .set("Authorization", `Bearer ${tokenFor("owner-1")}`)
       .send({ title: "Attempted edit" });
 
-    expect(response.status).toBe(404);
-    expect(response.body.message).toBe("No item with that id");
+    expect(response.status).toBe(409);
+    expect(response.body.message).toMatch(/editing/i);
   });
 
   it("archives an owned item only when it has no pending or approved claims", async () => {
@@ -224,12 +229,13 @@ describe("POST /api/items", () => {
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
     const archiveItem = vi
       .spyOn(Item, "findOneAndUpdate")
-      .mockResolvedValueOnce({ id: "item-1" } as never)
+      .mockResolvedValueOnce({ id: "item-1", reportType: "found", lifecycleStatus: "open", status: "found" } as never)
       .mockResolvedValueOnce({ id: "item-1", archivedAt: new Date() } as never);
-    const activeClaimQuery = {
-      session: vi.fn().mockResolvedValue(null),
-    };
-    const findClaim = vi.spyOn(Claim, "findOne").mockReturnValue(activeClaimQuery as never);
+    const pendingClaimQuery = { session: vi.fn().mockResolvedValue(null) };
+    const approvedClaimQuery = { session: vi.fn().mockResolvedValue(null) };
+    const findActiveClaims = vi.spyOn(Claim, "exists")
+      .mockReturnValueOnce(pendingClaimQuery as never)
+      .mockReturnValueOnce(approvedClaimQuery as never);
     const deleteItem = vi.spyOn(Item, "findOneAndDelete");
 
     const response = await request(app)
@@ -248,11 +254,10 @@ describe("POST /api/items", () => {
       { $set: { archivedAt: expect.any(Date) } },
       expect.objectContaining({ runValidators: true, session }),
     );
-    expect(findClaim).toHaveBeenCalledWith({
-      itemId: "item-1",
-      status: { $in: ["pending", "approved"] },
-    });
-    expect(activeClaimQuery.session).toHaveBeenCalledWith(session);
+    expect(findActiveClaims).toHaveBeenNthCalledWith(1, { itemId: "item-1", status: "pending" });
+    expect(findActiveClaims).toHaveBeenNthCalledWith(2, { itemId: "item-1", status: "approved" });
+    expect(pendingClaimQuery.session).toHaveBeenCalledWith(session);
+    expect(approvedClaimQuery.session).toHaveBeenCalledWith(session);
     expect(deleteItem).not.toHaveBeenCalled();
     expect(session.endSession).toHaveBeenCalledOnce();
   });
@@ -263,15 +268,15 @@ describe("POST /api/items", () => {
       mockAuthenticatedUser("owner-1");
       const session = transactionSession();
       vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+      const itemToArchive = { id: "item-1", reportType: "found", lifecycleStatus: "open", status: "found" };
       const lockItem = vi
         .spyOn(Item, "findOneAndUpdate")
-        .mockResolvedValue({ id: "item-1" } as never);
-      const activeClaimQuery = {
-        session: vi
-          .fn()
-          .mockResolvedValue({ id: "claim-1", status: activeStatus }),
-      };
-      vi.spyOn(Claim, "findOne").mockReturnValue(activeClaimQuery as never);
+        .mockResolvedValue(itemToArchive as never);
+      const pendingClaimQuery = { session: vi.fn().mockResolvedValue(activeStatus === "pending" ? { _id: "claim-pending" } : null) };
+      const approvedClaimQuery = { session: vi.fn().mockResolvedValue(activeStatus === "approved" ? { _id: "claim-approved" } : null) };
+      const findActiveClaims = vi.spyOn(Claim, "exists")
+        .mockReturnValueOnce(pendingClaimQuery as never)
+        .mockReturnValueOnce(approvedClaimQuery as never);
 
       const response = await request(app)
         .delete("/api/items/item-1")
@@ -279,6 +284,7 @@ describe("POST /api/items", () => {
 
       expect(response.status).toBe(409);
       expect(lockItem).toHaveBeenCalledOnce();
+      expect(findActiveClaims).toHaveBeenCalledTimes(activeStatus === "pending" ? 1 : 2);
       expect(lockItem).toHaveBeenCalledWith(
         expect.any(Object),
         { $inc: { claimRevision: 1 } },
@@ -287,6 +293,72 @@ describe("POST /api/items", () => {
       expect(session.endSession).toHaveBeenCalledOnce();
     },
   );
+
+  it("archives a returned Item only after the linked Claim confirms the same handover", async () => {
+    mockAuthenticatedUser("owner-1");
+    const session = transactionSession();
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session);
+    const handoverAt = new Date("2026-11-14T08:00:00.000Z");
+    const returnedItem = {
+      _id: "item-1", id: "item-1", reportType: "found", lifecycleStatus: "returned", status: "claimed",
+      reservedClaimId: "claim-1", handoverClaimId: "claim-1", handoverAt, handoverBy: "security-1",
+    };
+    const archiveItem = vi.spyOn(Item, "findOneAndUpdate")
+      .mockResolvedValueOnce(returnedItem as never)
+      .mockResolvedValueOnce({ ...returnedItem, archivedAt: new Date() } as never);
+    vi.spyOn(Claim, "exists")
+      .mockReturnValueOnce({ session: vi.fn().mockResolvedValue(null) } as never)
+      .mockReturnValueOnce({ session: vi.fn().mockResolvedValue(null) } as never);
+    const claim = { _id: "claim-1", itemId: "item-1", status: "approved", handoverAt, handoverBy: "security-1" };
+    const completedClaim = vi.spyOn(Claim, "findOne").mockReturnValue(sessionQuery(claim) as never);
+
+    const response = await request(app)
+      .delete("/api/items/item-1")
+      .set("Authorization", `Bearer ${tokenFor("owner-1")}`);
+
+    expect(response.status).toBe(204);
+    expect(completedClaim).toHaveBeenCalledWith({ _id: "claim-1", itemId: "item-1", status: "approved", handoverAt, handoverBy: "security-1" });
+    expect(archiveItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an inconsistent returned Item out of owner archive eligibility", async () => {
+    mockAuthenticatedUser("owner-1");
+    const item = {
+      _id: "item-1", id: "item-1", reportType: "found", lifecycleStatus: "returned", status: "claimed",
+      reservedClaimId: "claim-1", handoverClaimId: "claim-1", handoverAt: new Date("2026-11-14T08:00:00.000Z"), handoverBy: "security-1",
+    };
+    vi.spyOn(Item, "findOne").mockResolvedValue(item as never);
+    vi.spyOn(Claim, "aggregate").mockResolvedValueOnce([] as never).mockResolvedValueOnce([] as never);
+
+    const response = await request(app)
+      .get("/api/items/mine/item-1")
+      .set("Authorization", `Bearer ${tokenFor("owner-1")}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ hasActiveClaims: false, canArchive: false, reportType: "unknown", lifecycleStatus: "unknown", status: "unknown" });
+  });
+
+  it("marks a returned Item archivable only when its approved Claim matches the handover", async () => {
+    mockAuthenticatedUser("owner-1");
+    const handoverAt = new Date("2026-11-14T08:00:00.000Z");
+    const item = {
+      _id: "item-1", id: "item-1", reportType: "found", lifecycleStatus: "returned", status: "claimed",
+      reservedClaimId: "claim-1", handoverClaimId: "claim-1", handoverAt, handoverBy: "security-1",
+    };
+    vi.spyOn(Item, "findOne").mockResolvedValue(item as never);
+    vi.spyOn(Claim, "aggregate")
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([{
+        _id: "claim-1", itemId: "item-1", status: "approved", handoverAt, handoverBy: "security-1",
+      }] as never);
+
+    const response = await request(app)
+      .get("/api/items/mine/item-1")
+      .set("Authorization", `Bearer ${tokenFor("owner-1")}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ hasActiveClaims: false, canArchive: true, lifecycleStatus: "returned" });
+  });
 
   it("returns 204 for an already archived owned item without mutating it again", async () => {
     mockAuthenticatedUser("owner-1");
@@ -320,13 +392,18 @@ describe("public item visibility", () => {
   });
 
   it("hides archived item reports from the public listing", async () => {
-    const query = { sort: vi.fn().mockResolvedValue([{ id: "visible-item" }]) };
+    const query = {
+      sort: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([{ id: "visible-item", status: "found" }]),
+    };
     const findItems = vi.spyOn(Item, "find").mockReturnValue(query as never);
+    vi.spyOn(Item, "countDocuments").mockResolvedValue(1 as never);
 
     const response = await request(app).get("/api/items");
 
     expect(response.status).toBe(200);
-    expect(findItems).toHaveBeenCalledWith({ archivedAt: null });
+    expect(findItems).toHaveBeenCalledWith({ $and: [{ archivedAt: null }] });
   });
 
   it("keeps claimed item reports readable", async () => {

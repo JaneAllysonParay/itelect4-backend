@@ -16,6 +16,7 @@ import { app } from "../src/app.js";
 import { Claim } from "../src/models/Claim.js";
 import { Item } from "../src/models/Item.js";
 import { mockAuthenticatedUser } from "./authHelpers.js";
+import { sufficientFoundCustodyFilter } from "../src/utils/custody.js";
 
 function tokenFor(userId: string, role?: string): string {
   return jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "5m" });
@@ -125,7 +126,7 @@ describe("claim access and eligibility", () => {
     async (previousStatus) => {
       mockAuthenticatedUser("student-1");
       vi.spyOn(Item, "findOne").mockResolvedValue(
-        { ownerId: "owner-1", status: "found" } as never,
+        { ownerId: "owner-1", reportType: "found", lifecycleStatus: "open", status: "found", custodyStatus: "finder_reported" } as never,
       );
       const exists = vi
         .spyOn(Claim, "exists")
@@ -151,7 +152,7 @@ describe("claim access and eligibility", () => {
   it("rechecks claims of any status inside the item lock transaction", async () => {
     mockAuthenticatedUser("student-1");
     vi.spyOn(Item, "findOne").mockResolvedValue(
-      { ownerId: "owner-1", status: "found" } as never,
+      { ownerId: "owner-1", reportType: "found", lifecycleStatus: "open", status: "found", custodyStatus: "finder_reported" } as never,
     );
     vi.spyOn(Claim, "exists").mockResolvedValue(null);
     const session = transactionSession();
@@ -187,7 +188,7 @@ describe("claim access and eligibility", () => {
   it("creates an eligible claim for the authenticated user", async () => {
     mockAuthenticatedUser("student-1");
     vi.spyOn(Item, "findOne").mockResolvedValue(
-      { ownerId: "owner-1", status: "found" } as never,
+      { ownerId: "owner-1", reportType: "found", lifecycleStatus: "open", status: "found", custodyStatus: "finder_reported" } as never,
     );
     vi.spyOn(Claim, "exists").mockResolvedValue(null);
     const session = transactionSession();
@@ -222,16 +223,13 @@ describe("claim access and eligibility", () => {
       ],
       { session },
     );
-    expect(lockItem).toHaveBeenCalledWith(
-      {
-        _id: "item-1",
-        ownerId: { $ne: "student-1" },
-        status: "found",
-        archivedAt: null,
-      },
-      { $inc: { claimRevision: 1 } },
-      expect.objectContaining({ session, runValidators: true }),
-    );
+    const lockFilter = lockItem.mock.calls[0]?.[0] as { $and?: unknown[] };
+    expect(lockFilter.$and).toEqual(expect.arrayContaining([
+      { _id: "item-1", ownerId: { $ne: "student-1" }, archivedAt: null },
+      expect.objectContaining({ $or: expect.any(Array) }),
+      sufficientFoundCustodyFilter,
+    ]));
+    expect(lockItem).toHaveBeenCalledWith(expect.any(Object), { $inc: { claimRevision: 1 } }, expect.objectContaining({ session, runValidators: true }));
     expect(claimQuery.session).toHaveBeenCalledWith(session);
     expect(session.endSession).toHaveBeenCalledOnce();
   });
@@ -245,37 +243,31 @@ describe("claim proof visibility", () => {
 
   it("omits proof from an item owner's received-claims response", async () => {
     mockAuthenticatedUser("owner-1");
-    const findOwnedItems = vi.spyOn(Item, "find").mockReturnValue(
-      {
-        select: vi.fn().mockResolvedValue([
-          {
-            _id: "item-1",
-            toJSON: () => ({ id: "item-1", title: "Blue tumbler" }),
-          },
-        ]),
-      } as never,
-    );
-    const claimQuery = {
-      select: vi.fn().mockReturnThis(),
-      sort: vi.fn().mockResolvedValue([
-        {
-          itemId: "item-1",
-          toJSON: () => ({ id: "claim-1", status: "pending" }),
+    const aggregate = vi.spyOn(Claim, "aggregate").mockResolvedValue([{
+      rows: [{
+        _id: "claim-1", itemId: "item-1", claimantId: "student-1", status: "pending", proof: "private proof",
+        pickupInstructions: "private instructions", item: {
+          _id: "item-1", status: "found", title: "Blue tumbler", description: "Blue tumbler", location: "Library",
+          ownerId: "owner-1", dateReported: new Date("2026-11-12T00:00:00.000Z"),
         },
-      ]),
-    };
-    const findClaims = vi.spyOn(Claim, "find").mockReturnValue(claimQuery as never);
+      }],
+      count: [{ value: 1 }],
+    }] as never);
 
     const response = await request(app)
       .get("/api/claims/received")
       .set("Authorization", `Bearer ${tokenFor("owner-1")}`);
 
     expect(response.status).toBe(200);
-    expect(findOwnedItems).toHaveBeenCalledWith({ ownerId: "owner-1" });
-    expect(findClaims).toHaveBeenCalledWith({ itemId: { $in: ["item-1"] } });
-    expect(claimQuery.select).toHaveBeenCalledWith("-proof");
-    expect(response.body[0].item).toEqual({ id: "item-1", title: "Blue tumbler" });
+    expect(aggregate).toHaveBeenCalledOnce();
+    expect(aggregate.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+      { $match: { $expr: { $eq: [{ $toString: "$item.ownerId" }, "owner-1"] } } },
+    ]));
+    expect(response.body[0].item).toMatchObject({ id: "item-1", title: "Blue tumbler", reportType: "found" });
     expect(response.body[0]).not.toHaveProperty("proof");
+    expect(response.body[0]).not.toHaveProperty("claimantId");
+    expect(response.body[0]).not.toHaveProperty("pickupInstructions");
+    expect(response.headers["x-total-count"]).toBe("1");
   });
 
   it("keeps review metadata optional for claims created before this change", () => {
@@ -308,58 +300,46 @@ describe("staff claim review", () => {
 
   it("lets staff review pending claims with archived item context and no claimant ID", async () => {
     mockAuthenticatedUser("security-1", "security");
-    const claimDoc = {
-      itemId: "item-1",
-      toJSON: () => ({ id: "claim-1", status: "pending", proof: "proof text" }),
-    };
-    const query = {
-      select: vi.fn().mockReturnThis(),
-      sort: vi.fn().mockResolvedValue([claimDoc]),
-    };
-    const findClaims = vi.spyOn(Claim, "find").mockReturnValue(query as never);
-    const itemDoc = {
-      _id: "item-1",
-      toJSON: () => ({
-        id: "item-1",
-        title: "Blue tumbler",
-        description: "Blue with a silver lid",
-        status: "found",
-        location: "Library",
-        dateReported: "2026-11-12T00:00:00.000Z",
-        archivedAt: "2026-11-13T00:00:00.000Z",
-      }),
-    };
-    const itemQuery = { select: vi.fn().mockResolvedValue([itemDoc]) };
-    const findItems = vi.spyOn(Item, "find").mockReturnValue(itemQuery as never);
+    const aggregate = vi.spyOn(Claim, "aggregate").mockResolvedValue([{
+      rows: [{
+        _id: "claim-1", itemId: "item-1", claimantId: "student-1", status: "pending", proof: "proof text",
+        claimant: { name: "Student One", email: "student.one@example.edu" },
+        item: {
+          _id: "item-1", title: "Blue tumbler", description: "Blue with a silver lid", status: "found",
+          location: "Library", ownerId: "owner-1", dateReported: new Date("2026-11-12T00:00:00.000Z"),
+          archivedAt: new Date("2026-11-13T00:00:00.000Z"),
+        },
+      }],
+      count: [{ value: 1 }],
+    }] as never);
 
     const response = await request(app)
       .get("/api/claims/review")
       .set("Authorization", `Bearer ${tokenFor("security-1")}`);
 
     expect(response.status).toBe(200);
-    expect(findClaims).toHaveBeenCalledWith({ status: "pending" });
-    expect(query.select).toHaveBeenCalledWith("-claimantId");
-    expect(findItems).toHaveBeenCalledWith({ _id: { $in: ["item-1"] } });
+    expect(aggregate).toHaveBeenCalledOnce();
+    expect(aggregate.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([{ $match: { status: "pending" } }]));
     expect(response.body[0].item.title).toBe("Blue tumbler");
     expect(response.body[0].item.archivedAt).toBe("2026-11-13T00:00:00.000Z");
     expect(response.body[0]).not.toHaveProperty("claimantId");
+    expect(response.body[0].claimant).toEqual({ name: "Student One", email: "student.one@example.edu" });
+    expect(response.body[0].proof).toBe("proof text");
+    const pipeline = aggregate.mock.calls[0]?.[0] as Array<Record<string, unknown>>;
+    expect(pipeline).toContainEqual(expect.objectContaining({
+      $lookup: expect.objectContaining({
+        from: expect.any(String),
+        pipeline: expect.arrayContaining([expect.objectContaining({ $project: { _id: 0, name: 1, email: 1 } })]),
+      }),
+    }));
   });
 
   it("returns a safe missing-item context for a legacy pending claim", async () => {
     mockAuthenticatedUser("security-1", "security");
-    const claimQuery = {
-      select: vi.fn().mockReturnThis(),
-      sort: vi.fn().mockResolvedValue([
-        {
-          itemId: "missing-item",
-          toJSON: () => ({ id: "claim-1", status: "pending", proof: "proof text" }),
-        },
-      ]),
-    };
-    vi.spyOn(Claim, "find").mockReturnValue(claimQuery as never);
-    vi.spyOn(Item, "find").mockReturnValue(
-      { select: vi.fn().mockResolvedValue([]) } as never,
-    );
+    vi.spyOn(Claim, "aggregate").mockResolvedValue([{
+      rows: [{ _id: "claim-1", itemId: "missing-item", status: "pending", proof: "proof text" }],
+      count: [{ value: 1 }],
+    }] as never);
 
     const response = await request(app)
       .get("/api/claims/review")
@@ -384,6 +364,7 @@ describe("staff claim review", () => {
     const updateItem = vi.spyOn(Item, "findOneAndUpdate").mockResolvedValue(
       { id: "item-1", status: "claimed" } as never,
     );
+    const closeCompetitors = vi.spyOn(Claim, "updateMany").mockResolvedValue({ acknowledged: true } as never);
 
     const response = await request(app)
       .patch("/api/claims/claim-1/status")
@@ -399,17 +380,30 @@ describe("staff claim review", () => {
           status: "approved",
           reviewedBy: "security-1",
           reviewedAt: expect.any(Date),
+          decisionAt: expect.any(Date),
+          decisionSource: "staff",
         }),
       },
       expect.objectContaining({ session, runValidators: true }),
     );
     expect(updateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ $and: expect.any(Array) }),
       {
-        _id: "item-1",
-        status: "found",
-        archivedAt: null,
+        $set: expect.objectContaining({
+          status: "claimed",
+          reportType: "found",
+          lifecycleStatus: "reserved",
+          reservedAt: expect.any(Date),
+          reservedBy: "security-1",
+          reservedClaimId: "claim-1",
+        }),
+        $inc: { claimRevision: 1 },
       },
-      { $set: { status: "claimed" } },
+      expect.objectContaining({ session, runValidators: true }),
+    );
+    expect(closeCompetitors).toHaveBeenCalledWith(
+      { itemId: "item-1", _id: { $ne: "claim-1" }, status: "pending" },
+      { $set: expect.objectContaining({ status: "rejected", decisionSource: "system", decisionReason: "This item is no longer available", decisionAt: expect.any(Date) }) },
       expect.objectContaining({ session, runValidators: true }),
     );
     expect(session.endSession).toHaveBeenCalledOnce();
@@ -441,6 +435,8 @@ describe("staff claim review", () => {
           status: "rejected",
           reviewedBy: "admin-1",
           reviewedAt: expect.any(Date),
+          decisionAt: expect.any(Date),
+          decisionSource: "staff",
         }),
       },
       expect.objectContaining({ session, runValidators: true }),
@@ -470,8 +466,8 @@ describe("staff claim review", () => {
     expect(response.status).toBe(409);
     expect(updateClaim).toHaveBeenCalledOnce();
     expect(updateItem).toHaveBeenCalledWith(
-      { _id: "item-1", status: "found", archivedAt: null },
-      { $set: { status: "claimed" } },
+      expect.objectContaining({ $and: expect.any(Array) }),
+      expect.objectContaining({ $set: expect.objectContaining({ lifecycleStatus: "reserved" }) }),
       expect.objectContaining({ session, runValidators: true }),
     );
     expect(session.endSession).toHaveBeenCalledOnce();

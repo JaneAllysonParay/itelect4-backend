@@ -124,8 +124,13 @@ describe("authentication endpoint rate limits", () => {
       .send({ email: "jamie@example.invalid", password: "wrong-password" });
     expect(spoofedIpLogin.status).toBe(429);
 
-    const itemQuery = { sort: vi.fn().mockResolvedValue([]) };
+    const itemQuery = {
+      sort: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+    };
     vi.spyOn(Item, "find").mockReturnValue(itemQuery as never);
+    vi.spyOn(Item, "countDocuments").mockResolvedValue(0 as never);
     const itemRequest = await request(app).get("/api/items");
     expect(itemRequest.status).toBe(200);
 
@@ -137,8 +142,9 @@ describe("authentication endpoint rate limits", () => {
       }),
     };
     vi.spyOn(User, "findById").mockReturnValue(activeUserQuery as never);
-    const claimQuery = { sort: vi.fn().mockResolvedValue([]) };
-    vi.spyOn(Claim, "find").mockReturnValue(claimQuery as never);
+    vi.spyOn(Claim, "aggregate").mockResolvedValue([
+      { rows: [], count: [{ value: 0 }] },
+    ] as never);
     const claimRequest = await request(app)
       .get("/api/claims")
       .set("Authorization", `Bearer ${successfulLogin.body.token}`);

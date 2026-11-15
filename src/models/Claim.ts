@@ -35,6 +35,30 @@ const claimSchema = new Schema<ClaimDoc>({
     type: Schema.Types.ObjectId,
     ref: "User",
   },
+  decisionSource: {
+    type: String,
+    enum: ["staff", "system"],
+  },
+  decisionReason: {
+    type: String,
+    trim: true,
+    maxlength: [500, "Decision reason cannot exceed 500 characters"],
+  },
+  decisionAt: {
+    type: Date,
+  },
+  handoverAt: {
+    type: Date,
+  },
+  handoverBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
+  pickupInstructions: {
+    type: String,
+    trim: true,
+    maxlength: [1000, "Pickup instructions cannot exceed 1000 characters"],
+  },
 });
 
 claimSchema.set("toJSON", {
@@ -45,5 +69,9 @@ claimSchema.set("toJSON", {
     return ret;
   },
 });
+
+claimSchema.index({ claimantId: 1, claimDate: -1, _id: -1 });
+claimSchema.index({ itemId: 1, claimDate: -1, _id: -1 });
+claimSchema.index({ status: 1, claimDate: -1, _id: -1 });
 
 export const Claim = model<ClaimDoc>("Claim", claimSchema);
