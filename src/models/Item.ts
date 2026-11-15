@@ -27,6 +27,66 @@ const itemSchema = new Schema<ItemDoc>({
     type: Date,
     default: Date.now,
   },
+  reportType: {
+    type: String,
+    enum: ["lost", "found"],
+  },
+  lifecycleStatus: {
+    type: String,
+    enum: ["open", "reserved", "returned", "resolved"],
+  },
+  eventAt: {
+    type: Date,
+  },
+  category: {
+    type: String,
+    enum: ["electronics", "clothing", "bags", "keys", "documents", "accessories", "other"],
+  },
+  custodyStatus: {
+    type: String,
+    enum: ["finder_reported", "security_reported", "security_confirmed"],
+  },
+  custodyConfirmedAt: {
+    type: Date,
+  },
+  custodyConfirmedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
+  reservedAt: {
+    type: Date,
+  },
+  reservedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
+  reservedClaimId: {
+    type: Schema.Types.ObjectId,
+    ref: "Claim",
+  },
+  resolvedAt: {
+    type: Date,
+  },
+  resolvedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
+  handoverAt: {
+    type: Date,
+  },
+  handoverBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+  },
+  handoverClaimId: {
+    type: Schema.Types.ObjectId,
+    ref: "Claim",
+  },
+  handoverInternalNote: {
+    type: String,
+    trim: true,
+    maxlength: [1000, "Handover note cannot exceed 1000 characters"],
+  },
   status: {
     type: String,
     enum: ["lost", "found", "claimed"],

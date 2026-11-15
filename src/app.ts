@@ -18,7 +18,10 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN ?? "")
   .map((origin) => origin.trim())
   .filter((origin) => origin !== "");
 
-app.use(cors({ origin: ALLOWED_ORIGINS }));
+app.use(cors({
+  origin: ALLOWED_ORIGINS,
+  exposedHeaders: ["X-Page", "X-Page-Size", "X-Total-Count", "X-Has-More"],
+}));
 app.use(express.json());
 
 app.get("/api/health", async (_req: Request, res: Response): Promise<void> => {
